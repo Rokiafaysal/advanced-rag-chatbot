@@ -67,10 +67,10 @@ def get_reranker():
 
 def get_llm():
     from groq import Groq
-    if settings.groq_api_key_docu is None:
-        raise gr.Error("GROQ_API_KEY_DOCU is not set. Add it in the Space settings under Secrets.")
+    if settings.groq_api_key is None:
+        raise gr.Error("GROQ_API_KEY is not set. Add it in the Space settings under Secrets.")
     if "llm" not in _models:
-        _models["llm"] = Groq(api_key=settings.groq_api_key_docu.get_secret_value())
+        _models["llm"] = Groq(api_key=settings.groq_api_key.get_secret_value())
     return _models["llm"]
 
 
