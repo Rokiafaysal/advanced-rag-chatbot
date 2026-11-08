@@ -69,7 +69,7 @@ pip install pypdf faiss-cpu sentence-transformers groq gradio ragas FlagEmbeddin
 
 ```python
 # Add your Groq API key
-GROQ_API_KEY = "your_key_here"
+GROQ_API_KEY_DOCU = "your_key_here"
 ```
 
 ---

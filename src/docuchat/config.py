@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     embed_model:str="sentence-transformers/all-MiniLM-L6-v2"
     rerank_model:str="BAAI/bge-reranker-v2-m3"
     groq_model:str="openai/gpt-oss-120b"
-    groq_api_key:SecretStr |None=None
+    GROQ_API_KEY_docu:SecretStr |None=None
 
 
     chunk_size:int=500
