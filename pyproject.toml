@@ -1,0 +1,25 @@
+[project]
+name = "docuchat"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Rokiafaysal", email = "rokiafaysal44@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "faiss-cpu>=1.15.1",
+    "gradio==5.50.0",
+    "groq>=1.7.0",
+    "numpy>=2.4.6",
+    "pypdf>=7.0.0",
+    "sentence-transformers>=6.2.0",
+    "spaces>=0.51.3",
+]
+
+[project.scripts]
+docuchat = "docuchat:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
