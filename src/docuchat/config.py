@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     chunk_overlap:int=50
 
 
-    retrive_k:int=10
+    retrieve_k:int=10
     top_n:int=3
 
 
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     def check_values(self):
         if self.chunk_overlap>=self.chunk_size:
             raise ValueError("chunk_overlap must be less than chunk_size")
-        if self.top_n>=self.retrive_k:
+        if self.top_n>=self.retrieve_k:
             raise ValueError("top_n must be less than retrive_k")
         return self 
 
