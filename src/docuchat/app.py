@@ -6,37 +6,39 @@ import faiss
 import gradio as gr
 import numpy as np
 from pypdf import PdfReader
-
-# Runs on CPU by default, so visitors never hit Hugging Face's per-visitor ZeroGPU quota.
-# On a ZeroGPU Space, set a variable USE_GPU=1 to move embeddings and reranking to the GPU
-# (faster, but each visitor then spends their own small daily GPU quota).
+from docuchat.config import settings
 try:
     import spaces
     ZERO_GPU = True
 except ImportError:
     ZERO_GPU = False
 
-USE_GPU = ZERO_GPU and os.environ.get("USE_GPU", "0") == "1"
-gpu = spaces.GPU(duration=60) if USE_GPU else (lambda fn: fn)
+USE_GPU = settings.use_gpu
+
 DEVICE = "cuda" if USE_GPU else "cpu"
 
-if ZERO_GPU and not USE_GPU:
-    # A ZeroGPU Space refuses to start without at least one @spaces.GPU function.
-    # This one is never called, so no GPU quota is used.
-    @spaces.GPU
-    def _gpu_placeholder():
-        return True
+if ZERO_GPU:
+    gpu = spaces.GPU(duration=60) if USE_GPU else (lambda fn: fn)
 
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-RERANK_MODEL = os.environ.get("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+    if not USE_GPU:
+        # Required for ZeroGPU Spaces
+        @spaces.GPU
+        def _gpu_placeholder():
+            return True
+else:
+    gpu = lambda fn: fn
+
+
+EMBED_MODEL = settings.embed_model
+RERANK_MODEL = settings.rerank_model
 # Groq retired llama-3.3-70b-versatile for free accounts (Aug 2026). Override with a GROQ_MODEL variable.
-LLM_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+LLM_MODEL = settings.groq_model
 
-CHUNK_SIZE = 500      # words per chunk
-CHUNK_OVERLAP = 50    # words shared between neighbouring chunks
-RETRIEVE_K = 10       # candidates from FAISS
-TOP_N = 3             # chunks kept after reranking
-MAX_PAGES = 150       # keeps the free CPU Space responsive
+CHUNK_SIZE = settings.chunk_size      # words per chunk
+CHUNK_OVERLAP = settings.chunk_overlap    # words shared between neighbouring chunks
+RETRIEVE_K = settings.retrieve_k       # candidates from FAISS
+TOP_N = settings.top_n             # chunks kept after reranking
+MAX_PAGES = settings.max_pages       # keeps the free CPU Space responsive
 
 SYSTEM_PROMPT = (
     "You answer questions about a document using only the context provided. "
@@ -63,14 +65,12 @@ def get_reranker():
         _models["reranker"] = CrossEncoder(RERANK_MODEL, max_length=512, device=DEVICE)
     return _models["reranker"]
 
-
 def get_llm():
     from groq import Groq
-    key = os.environ.get("GROQ_API_KEY")
-    if not key:
+    if settings.groq_api_key is None:
         raise gr.Error("GROQ_API_KEY is not set. Add it in the Space settings under Secrets.")
     if "llm" not in _models:
-        _models["llm"] = Groq(api_key=key)
+        _models["llm"] = Groq(api_key=settings.groq_api_key.get_secret_value())
     return _models["llm"]
 
 
