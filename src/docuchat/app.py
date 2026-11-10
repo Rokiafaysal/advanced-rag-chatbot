@@ -5,13 +5,16 @@ import os
 import faiss
 import gradio as gr
 import numpy as np
-from pypdf import PdfReader
+
 from docuchat.config import settings
 try:
     import spaces
     ZERO_GPU = True
 except ImportError:
     ZERO_GPU = False
+from docuchat.chunking import chunk_pages
+from docuchat.ingestion import IngestionError, load_pdf
+from docuchat.models import Chunk, ScoredChunk
 
 USE_GPU = settings.use_gpu
 
@@ -31,14 +34,13 @@ else:
 
 EMBED_MODEL = settings.embed_model
 RERANK_MODEL = settings.rerank_model
-# Groq retired llama-3.3-70b-versatile for free accounts (Aug 2026). Override with a GROQ_MODEL variable.
 LLM_MODEL = settings.groq_model
 
-CHUNK_SIZE = settings.chunk_size      # words per chunk
-CHUNK_OVERLAP = settings.chunk_overlap    # words shared between neighbouring chunks
-RETRIEVE_K = settings.retrieve_k       # candidates from FAISS
-TOP_N = settings.top_n             # chunks kept after reranking
-MAX_PAGES = settings.max_pages       # keeps the free CPU Space responsive
+CHUNK_SIZE = settings.chunk_size     
+CHUNK_OVERLAP = settings.chunk_overlap  
+RETRIEVE_K = settings.retrieve_k     
+TOP_N = settings.top_n            
+MAX_PAGES = settings.max_pages     
 
 SYSTEM_PROMPT = (
     "You answer questions about a document using only the context provided. "
@@ -47,7 +49,6 @@ SYSTEM_PROMPT = (
 )
 
 
-# ---------- models (loaded once, shared by all users) ----------
 
 _models = {}
 
@@ -75,17 +76,9 @@ def get_llm():
 
 
 if ZERO_GPU:
-    # Load models at startup (outside any GPU function), so the first question isn't slow.
     get_embedder()
     get_reranker()
 
-
-# ---------- pipeline ----------
-
-def split_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    words = text.split()
-    step = chunk_size - overlap
-    return [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), step)]
 
 
 @gpu
@@ -97,21 +90,23 @@ def embed(texts):
 def rerank_scores(query, candidates):
     return [float(s) for s in get_reranker().predict([[query, c] for c in candidates])]
 
-
-def build_index(chunks):
-    emb = embed(chunks)
+def build_index(chunks: list[Chunk]):
+    emb = embed([c.text for c in chunks])
     index = faiss.IndexFlatL2(emb.shape[1])
     index.add(emb)
     return index
 
 
-def retrieve(query, chunks, index):
+def retrieve(query: str, chunks: list[Chunk], index) -> list[ScoredChunk]:
     _, ids = index.search(embed([query]), min(RETRIEVE_K, len(chunks)))
     candidates = [chunks[i] for i in ids[0] if i != -1]
-    scores = rerank_scores(query, candidates)
-    ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
+    scores = rerank_scores(query, [c.text for c in candidates])
+    ranked = sorted(
+        (ScoredChunk(chunk=c, score=s) for c, s in zip(candidates, scores)),
+        key=lambda r: r.score,
+        reverse=True,
+    )
     return ranked[:TOP_N]
-
 
 def generate(query, context_chunks, history):
     context = "\n\n---\n\n".join(context_chunks)
@@ -131,26 +126,18 @@ def generate(query, context_chunks, history):
     return answer or "I couldn't generate an answer. Please try rephrasing the question."
 
 
-# ---------- Gradio handlers (state is per browser session) ----------
-
 def process_pdf(pdf_path, _state):
     if not pdf_path:
         return None, "⬆️ Upload a PDF to get started", [], ""
-    try:
-        reader = PdfReader(pdf_path)
-    except Exception:
-        raise gr.Error("Couldn't read this file. Please upload a valid PDF.")
-    if len(reader.pages) > MAX_PAGES:
-        raise gr.Error(f"This demo supports PDFs up to {MAX_PAGES} pages.")
-    text = "\n".join((p.extract_text() or "") for p in reader.pages)
-    chunks = split_text(text)
-    if not chunks:
-        raise gr.Error("No text found. Scanned PDFs (images only) aren't supported.")
-    index = build_index(chunks)
     name = os.path.basename(pdf_path)
-    status = f"✅ **{name}** loaded: {len(reader.pages)} pages, {len(chunks)} chunks. Ask away!"
+    try:
+        pages = load_pdf(pdf_path)
+    except IngestionError as e:
+        raise gr.Error(str(e))
+    chunks = chunk_pages(pages, source=name)
+    index = build_index(chunks)
+    status = f"✅ **{name}** loaded: {len(pages)} pages with text, {len(chunks)} chunks. Ask away!"
     return {"chunks": chunks, "index": index}, status, [], ""
-
 
 def chat(question, history, state):
     question = (question or "").strip()
@@ -159,17 +146,17 @@ def chat(question, history, state):
     if not state:
         raise gr.Error("Upload a PDF first.")
     ranked = retrieve(question, state["chunks"], state["index"])
-    answer = generate(question, [c for _, c in ranked], history)
+    answer = generate(question, [r.chunk.text for r in ranked], history)
     history = history + [
         {"role": "user", "content": question},
         {"role": "assistant", "content": answer},
     ]
     sources = "\n\n".join(
-        f"**#{i} · rerank score {float(s):.2f}**\n\n> {c[:600]}{'…' if len(c) > 600 else ''}"
-        for i, (s, c) in enumerate(ranked, 1)
+        f"**#{i} · page {r.chunk.page} · rerank score {r.score:.2f}**\n\n"
+        f"> {r.chunk.text[:600]}{'…' if len(r.chunk.text) > 600 else ''}"
+        for i, r in enumerate(ranked, 1)
     )
     return history, "", sources
-
 
 # ---------- UI ----------
 
