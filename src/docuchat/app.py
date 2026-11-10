@@ -1,129 +1,58 @@
-
-
-import os
-
-import faiss
+"""Gradio UI for DocuChat. All RAG logic lives in docuchat.pipeline."""
 import gradio as gr
-import numpy as np
 
 from docuchat.config import settings
-
-from docuchat.chunking import chunk_pages
-from docuchat.ingestion import IngestionError, load_pdf
-from docuchat.models import Chunk, ScoredChunk
-
-from docuchat.gpu import DEVICE, ZERO_GPU, gpu
-from docuchat.retrieval import build_index, dense_search, get_embedder
-EMBED_MODEL = settings.embed_model
-RERANK_MODEL = settings.rerank_model
-LLM_MODEL = settings.groq_model
-
-CHUNK_SIZE = settings.chunk_size     
-CHUNK_OVERLAP = settings.chunk_overlap  
-RETRIEVE_K = settings.retrieve_k     
-TOP_N = settings.top_n            
-MAX_PAGES = settings.max_pages     
-
-SYSTEM_PROMPT = (
-    "You answer questions about a document using only the context provided. "
-    "If the answer is not in the context, say you couldn't find it in the document. "
-    "Be clear and concise."
-)
-
-
-
-_models = {}
-
-
-
-def get_reranker():
-    if "reranker" not in _models:
-        from sentence_transformers import CrossEncoder
-        _models["reranker"] = CrossEncoder(RERANK_MODEL, max_length=512, device=DEVICE)
-    return _models["reranker"]
-
-def get_llm():
-    from groq import Groq
-    if settings.groq_api_key is None:
-        raise gr.Error("GROQ_API_KEY is not set. Add it in the Space settings under Secrets.")
-    if "llm" not in _models:
-        _models["llm"] = Groq(api_key=settings.groq_api_key.get_secret_value())
-    return _models["llm"]
-
+from docuchat.generation import GenerationError
+from docuchat.gpu import ZERO_GPU
+from docuchat.ingestion import IngestionError
+from docuchat.pipeline import ask, ingest
+from docuchat.reranking import get_reranker
+from docuchat.retrieval import get_embedder
 
 if ZERO_GPU:
+    # Load models at startup so the first question isn't slow.
     get_embedder()
     get_reranker()
 
 
+# ---------- handlers (state is per browser session) ----------
 
-@gpu
-
-@gpu
-def rerank_scores(query, candidates):
-    return [float(s) for s in get_reranker().predict([[query, c] for c in candidates])]
-
-
-
-def retrieve(query: str, chunks: list[Chunk], index) -> list[ScoredChunk]:
-    candidates = dense_search(query, chunks, index)
-    scores = rerank_scores(query, [r.chunk.text for r in candidates])
-    ranked = sorted(
-        (ScoredChunk(chunk=r.chunk, score=s) for r, s in zip(candidates, scores)),
-        key=lambda r: r.score,
-        reverse=True,
-    )
-    return ranked[:TOP_N]
-
-def generate(query, context_chunks, history):
-    context = "\n\n---\n\n".join(context_chunks)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for turn in history[-4:]:  # short memory for follow-up questions
-        messages.append({"role": turn["role"], "content": turn["content"]})
-    messages.append({"role": "user", "content": f"Context from the document:\n{context}\n\nQuestion: {query}"})
-    kwargs = dict(model=LLM_MODEL, messages=messages, temperature=0.3, max_completion_tokens=2048)
-    if LLM_MODEL.startswith("openai/gpt-oss"):
-        kwargs["reasoning_effort"] = "low"  # reasoning models: keep answers fast
-    try:
-        resp = get_llm().chat.completions.create(**kwargs)
-    except Exception as e:
-        print(f"LLM error: {e!r}")
-        raise gr.Error("The language model didn't respond. Please try again in a moment.")
-    answer = (resp.choices[0].message.content or "").strip()
-    return answer or "I couldn't generate an answer. Please try rephrasing the question."
-
-
-def process_pdf(pdf_path, _state):
+def process_pdf(pdf_path, _doc):
     if not pdf_path:
         return None, "⬆️ Upload a PDF to get started", [], ""
-    name = os.path.basename(pdf_path)
     try:
-        pages = load_pdf(pdf_path)
+        doc = ingest(pdf_path)
     except IngestionError as e:
         raise gr.Error(str(e))
-    chunks = chunk_pages(pages, source=name)
-    index = build_index(chunks)
-    status = f"✅ **{name}** loaded: {len(pages)} pages with text, {len(chunks)} chunks. Ask away!"
-    return {"chunks": chunks, "index": index}, status, [], ""
+    status = f"✅ **{doc.name}** loaded: {doc.n_pages} pages with text, {len(doc.chunks)} chunks. Ask away!"
+    return doc, status, [], ""
 
-def chat(question, history, state):
+
+def format_sources(sources) -> str:
+    return "\n\n".join(
+        f"**#{i} · page {r.chunk.page} · rerank score {r.score:.2f}**\n\n"
+        f"> {r.chunk.text[:600]}{'…' if len(r.chunk.text) > 600 else ''}"
+        for i, r in enumerate(sources, 1)
+    )
+
+
+def chat(question, history, doc):
     question = (question or "").strip()
     if not question:
         return history, "", gr.update()
-    if not state:
+    if doc is None:
         raise gr.Error("Upload a PDF first.")
-    ranked = retrieve(question, state["chunks"], state["index"])
-    answer = generate(question, [r.chunk.text for r in ranked], history)
+    try:
+        answer, sources = ask(question, doc, history)
+    except GenerationError as e:
+        print(f"LLM error: {e.__cause__!r}")
+        raise gr.Error(str(e))
     history = history + [
         {"role": "user", "content": question},
-        {"role": "assistant", "content": answer},
+        {"role": "assistant", "content": answer.text},
     ]
-    sources = "\n\n".join(
-        f"**#{i} · page {r.chunk.page} · rerank score {r.score:.2f}**\n\n"
-        f"> {r.chunk.text[:600]}{'…' if len(r.chunk.text) > 600 else ''}"
-        for i, r in enumerate(ranked, 1)
-    )
-    return history, "", sources
+    return history, "", format_sources(sources)
+
 
 # ---------- UI ----------
 
@@ -142,16 +71,16 @@ RAGAS runs separately from the live app because LLM-judged evaluation takes minu
 
 HOW_MD = f"""
 ## How it works
-1. The PDF is split into {CHUNK_SIZE}-word chunks with {CHUNK_OVERLAP}-word overlap and embedded with **all-MiniLM-L6-v2**.
-2. Your question is matched against the chunks with **FAISS**, keeping the top {RETRIEVE_K} candidates.
-3. A **BGE cross-encoder** ({RERANK_MODEL}) reranks them and keeps the best {TOP_N}.
-4. **{LLM_MODEL}** (via Groq) answers using only those chunks. Open *Retrieved sources* to see exactly what it read.
+1. The PDF is split into {settings.chunk_size}-word chunks with {settings.chunk_overlap}-word overlap and embedded with **{settings.embed_model}**.
+2. Your question is matched against the chunks with **FAISS**, keeping the top {settings.retrieve_k} candidates.
+3. A **BGE cross-encoder** ({settings.rerank_model}) reranks them and keeps the best {settings.top_n}.
+4. **{settings.groq_model}** (via Groq) answers using only those chunks. Open *Retrieved sources* to see exactly what it read.
 
 [Source code on GitHub](https://github.com/Rokiafaysal/advanced-rag-chatbot)
 """
 
 with gr.Blocks(theme=gr.themes.Soft(), title="Advanced RAG Chatbot") as demo:
-    state = gr.State(None)
+    doc_state = gr.State(None)
     gr.Markdown("# 🤖 Advanced RAG Chatbot\nUpload a PDF and ask questions. Answers are grounded in your document, with sources shown.")
 
     with gr.Tab("💬 Chat"):
@@ -163,18 +92,18 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Advanced RAG Chatbot") as demo:
                 chatbot = gr.Chatbot(type="messages", height=420, label="Chat")
                 with gr.Row():
                     question = gr.Textbox(placeholder="Ask something about your PDF…", show_label=False, scale=5)
-                    ask = gr.Button("Ask", variant="primary", scale=1)
+                    ask_btn = gr.Button("Ask", variant="primary", scale=1)
                 with gr.Accordion("📎 Retrieved sources", open=False):
-                    sources = gr.Markdown()
+                    sources_md = gr.Markdown()
 
     with gr.Tab("📊 Evaluation"):
         gr.Markdown(EVAL_MD)
     with gr.Tab("⚙️ How it works"):
         gr.Markdown(HOW_MD)
 
-    pdf.change(process_pdf, [pdf, state], [state, status, chatbot, sources])
-    ask.click(chat, [question, chatbot, state], [chatbot, question, sources])
-    question.submit(chat, [question, chatbot, state], [chatbot, question, sources])
+    pdf.change(process_pdf, [pdf, doc_state], [doc_state, status, chatbot, sources_md])
+    ask_btn.click(chat, [question, chatbot, doc_state], [chatbot, question, sources_md])
+    question.submit(chat, [question, chatbot, doc_state], [chatbot, question, sources_md])
 
 if __name__ == "__main__":
     demo.queue(default_concurrency_limit=2).launch()

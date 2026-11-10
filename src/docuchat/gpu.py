@@ -1,4 +1,3 @@
-"""Where models run: CPU by default, GPU only when USE_GPU=1."""
 from docuchat.config import settings
 
 try:
