@@ -7,31 +7,13 @@ import gradio as gr
 import numpy as np
 
 from docuchat.config import settings
-try:
-    import spaces
-    ZERO_GPU = True
-except ImportError:
-    ZERO_GPU = False
+
 from docuchat.chunking import chunk_pages
 from docuchat.ingestion import IngestionError, load_pdf
 from docuchat.models import Chunk, ScoredChunk
 
-USE_GPU = settings.use_gpu
-
-DEVICE = "cuda" if USE_GPU else "cpu"
-
-if ZERO_GPU:
-    gpu = spaces.GPU(duration=60) if USE_GPU else (lambda fn: fn)
-
-    if not USE_GPU:
-        # Required for ZeroGPU Spaces
-        @spaces.GPU
-        def _gpu_placeholder():
-            return True
-else:
-    gpu = lambda fn: fn
-
-
+from docuchat.gpu import DEVICE, ZERO_GPU, gpu
+from docuchat.retrieval import build_index, dense_search, get_embedder
 EMBED_MODEL = settings.embed_model
 RERANK_MODEL = settings.rerank_model
 LLM_MODEL = settings.groq_model
@@ -52,12 +34,6 @@ SYSTEM_PROMPT = (
 
 _models = {}
 
-
-def get_embedder():
-    if "embedder" not in _models:
-        from sentence_transformers import SentenceTransformer
-        _models["embedder"] = SentenceTransformer(EMBED_MODEL, device=DEVICE)
-    return _models["embedder"]
 
 
 def get_reranker():
@@ -82,27 +58,18 @@ if ZERO_GPU:
 
 
 @gpu
-def embed(texts):
-    return np.asarray(get_embedder().encode(texts, batch_size=32), dtype="float32")
-
 
 @gpu
 def rerank_scores(query, candidates):
     return [float(s) for s in get_reranker().predict([[query, c] for c in candidates])]
 
-def build_index(chunks: list[Chunk]):
-    emb = embed([c.text for c in chunks])
-    index = faiss.IndexFlatL2(emb.shape[1])
-    index.add(emb)
-    return index
 
 
 def retrieve(query: str, chunks: list[Chunk], index) -> list[ScoredChunk]:
-    _, ids = index.search(embed([query]), min(RETRIEVE_K, len(chunks)))
-    candidates = [chunks[i] for i in ids[0] if i != -1]
-    scores = rerank_scores(query, [c.text for c in candidates])
+    candidates = dense_search(query, chunks, index)
+    scores = rerank_scores(query, [r.chunk.text for r in candidates])
     ranked = sorted(
-        (ScoredChunk(chunk=c, score=s) for c, s in zip(candidates, scores)),
+        (ScoredChunk(chunk=r.chunk, score=s) for r, s in zip(candidates, scores)),
         key=lambda r: r.score,
         reverse=True,
     )
