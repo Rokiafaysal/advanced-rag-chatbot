@@ -1,6 +1,7 @@
 """Clean extracted page text: whitespace, repeated headers/footers, page numbers."""
 import re
 from collections import Counter
+import unicodedata
 from docuchat.normalization import TATWEEL
 
 EDGE_LINES = 3   # headers/footers live in the first/last few lines of a page
@@ -12,10 +13,11 @@ PAGE_NUMBER = re.compile(r"^(page\s*)?\d{1,4}(\s*(of|/)\s*\d{1,4})?$", re.IGNORE
 BLANK_RUNS = re.compile(r"\n{3,}")
 
 
-def _split_lines(text: str) -> list[str]:
-    text=text.replace(TATWEEL, "")  
-    return [SPACES.sub(" ", line).strip() for line in text.splitlines()]  
 
+
+def _split_lines(text: str) -> list[str]:
+    text = unicodedata.normalize("NFKC", text).replace(TATWEEL, "")
+    return [SPACES.sub(" ", line).strip() for line in text.splitlines()]
 
 def _key(line: str) -> str:
     # "Page 3 of 8" and "Page 4 of 8" count as the same line

@@ -9,7 +9,7 @@ import logging
 
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 
-ARABIC_LETTER = re.compile(r"[\u0600-\u06FF]")
+ARABIC_LETTER = re.compile(r"[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]")
 LATIN_LETTER = re.compile(r"[A-Za-z]")
 
 
