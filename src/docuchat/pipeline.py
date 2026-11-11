@@ -9,6 +9,7 @@ from docuchat.ingestion import load_pdf
 from docuchat.models import Answer, Chunk, Citation, ScoredChunk
 from docuchat.reranking import rerank
 from docuchat.retrieval import build_index, dense_search
+from docuchat.cleaning import clean_pages
 
 
 @dataclass
@@ -21,7 +22,7 @@ class Document:
 
 def ingest(path: str | Path) -> Document:
     name = Path(path).name
-    pages = load_pdf(path)
+    pages = clean_pages(load_pdf(path))
     chunks = chunk_pages(pages, source=name)
     return Document(name=name, n_pages=len(pages), chunks=chunks, index=build_index(chunks))
 

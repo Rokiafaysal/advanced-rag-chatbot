@@ -5,6 +5,9 @@ import pymupdf
 from pypdf import PdfReader
 
 from docuchat.config import settings
+import logging
+
+logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 ARABIC_LETTER = re.compile(r"[\u0600-\u06FF]")
 LATIN_LETTER = re.compile(r"[A-Za-z]")
