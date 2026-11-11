@@ -1,6 +1,7 @@
 """Clean extracted page text: whitespace, repeated headers/footers, page numbers."""
 import re
 from collections import Counter
+from docuchat.normalization import TATWEEL
 
 EDGE_LINES = 3   # headers/footers live in the first/last few lines of a page
 MIN_REPEATS = 3  # a line on this many page edges is a header/footer, not content
@@ -12,7 +13,8 @@ BLANK_RUNS = re.compile(r"\n{3,}")
 
 
 def _split_lines(text: str) -> list[str]:
-    return [SPACES.sub(" ", line).strip() for line in text.splitlines()]
+    text=text.replace(TATWEEL, "")  
+    return [SPACES.sub(" ", line).strip() for line in text.splitlines()]  
 
 
 def _key(line: str) -> str:
