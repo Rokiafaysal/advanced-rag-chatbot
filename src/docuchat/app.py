@@ -71,7 +71,7 @@ RAGAS runs separately from the live app because LLM-judged evaluation takes minu
 
 HOW_MD = f"""
 ## How it works
-1. The PDF is split into {settings.chunk_size}-word chunks with {settings.chunk_overlap}-word overlap and embedded with **{settings.embed_model}**.
+1. Each page is cleaned and split into chunks of whole sentences, up to {settings.chunk_size} tokens, and embedded with **{settings.embed_model}**.
 2. Your question is matched against the chunks with **FAISS**, keeping the top {settings.retrieve_k} candidates.
 3. A **BGE cross-encoder** ({settings.rerank_model}) reranks them and keeps the best {settings.top_n}.
 4. **{settings.groq_model}** (via Groq) answers using only those chunks. Open *Retrieved sources* to see exactly what it read.

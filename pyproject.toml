@@ -17,6 +17,7 @@ dependencies = [
     "pypdf>=7.0.0",
     "sentence-transformers>=6.2.0",
     "spaces>=0.51.3",
+    "tokenizers>=0.23.3",
 ]
 
 [project.scripts]

@@ -471,6 +471,7 @@ dependencies = [
     { name = "pypdf" },
     { name = "sentence-transformers" },
     { name = "spaces" },
+    { name = "tokenizers" },
 ]
 
 [package.metadata]
@@ -484,6 +485,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=7.0.0" },
     { name = "sentence-transformers", specifier = ">=6.2.0" },
     { name = "spaces", specifier = ">=0.51.3" },
+    { name = "tokenizers", specifier = ">=0.23.3" },
 ]
 
 [[package]]

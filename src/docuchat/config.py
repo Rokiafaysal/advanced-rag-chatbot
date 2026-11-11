@@ -13,7 +13,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("GROQ_API_KEY_DOCU", "GROQ_API_KEY"),
     )
 
-    chunk_size: int = 500
+    chunk_size: int = 350
     chunk_overlap: int = 50
 
     retrieve_k: int = 10
