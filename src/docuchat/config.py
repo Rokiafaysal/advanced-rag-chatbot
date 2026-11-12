@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embed_query_prefix: str = ""    # e5 models need "query: "
+    embed_passage_prefix: str = ""  # e5 models need "passage: "
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     groq_model: str = "openai/gpt-oss-120b"
     groq_api_key: SecretStr | None = Field(

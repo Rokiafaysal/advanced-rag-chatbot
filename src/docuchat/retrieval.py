@@ -18,11 +18,11 @@ def get_embedder():
 
 @gpu
 def embed(texts: list[str]) -> np.ndarray:
-    return np.asarray(get_embedder().encode(texts, batch_size=32), dtype="float32")
-
+    vectors = get_embedder().encode(texts, batch_size=32, normalize_embeddings=True)
+    return np.asarray(vectors, dtype="float32")
 
 def build_index(chunks: list[Chunk]) -> faiss.Index:
-    emb = embed([c.text for c in chunks])
+    emb = embed([settings.embed_passage_prefix + c.text for c in chunks])
     index = faiss.IndexFlatL2(emb.shape[1])
     index.add(emb)
     return index
@@ -32,7 +32,7 @@ def dense_search(
     query: str, chunks: list[Chunk], index: faiss.Index, k: int | None = None
 ) -> list[ScoredChunk]:
     k = min(k or settings.retrieve_k, len(chunks))
-    distances, ids = index.search(embed([query]), k)
+    distances, ids = index.search(embed([settings.embed_query_prefix + query]), k)
     return [
         ScoredChunk(chunk=chunks[i], score=-float(d))
         for d, i in zip(distances[0], ids[0])
